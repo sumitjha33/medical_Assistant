@@ -2,8 +2,11 @@ Flask==3.0.0
 pinecone-client==3.0.0
 langchain==0.1.0
 langchain-google-genai==0.0.6
-sentence-transformers==2.2.2
 langchain-community==0.0.13
-gunicorn
 langchain-core==0.1.10
+sentence-transformers==2.2.2
+huggingface-hub==0.19.4
+transformers==4.36.2
+torch==2.1.2
 python-dotenv==1.0.0
+gunicorn==21.2.0
