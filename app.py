@@ -1,8 +1,8 @@
 from flask import Flask, render_template, request, jsonify
 import os
-from pinecone import Pinecone
+from pinecone import Pinecone, ServerlessSpec
 from langchain.vectorstores import Pinecone as PineconeVectorStore
-from langchain.embeddings import HuggingFaceBgeEmbeddings
+from langchain_community.embeddings import HuggingFaceBgeEmbeddings
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
@@ -17,14 +17,28 @@ def Hugging_face_embedding():
 
 embeddings = Hugging_face_embedding()
 
-
 # Initialize Pinecone Client
-pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
-docsearch = PineconeVectorStore.from_existing_index(index_name="medical-chatbot", embedding=embeddings)
-retriever = docsearch.as_retriever(search_type='similarity', search_kwargs={"k": 3})
+pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
+
+index_name = "medical-chatbot"
+
+# Check if the index exists, otherwise create it
+if index_name not in pc.list_indexes().names():
+    pc.create_index(
+        name=index_name,
+        dimension=384,  # Adjust to match your embedding model
+        metric="cosine",
+        spec=ServerlessSpec(cloud="aws", region="us-west-2")
+    )
+
+docsearch = PineconeVectorStore.from_existing_index(index_name=index_name, embedding=embeddings)
+retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k": 3})
 
 # Set up Google Gemini AI API key
-os.environ["GOOGLE_API_KEY"]
+google_api_key = os.environ.get("GOOGLE_API_KEY")
+if not google_api_key:
+    raise ValueError("GOOGLE_API_KEY is not set in environment variables.")
+
 llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.9)
 
 system_prompt = ('''You are a knowledgeable and empathetic AI medical assistant designed to assist users with possible causes of symptoms, dietary recommendations, and general remedies. Your goal is to provide informative and compassionate responses while ensuring users understand that you are not a substitute for professional medical advice.
@@ -35,23 +49,6 @@ system_prompt = ('''You are a knowledgeable and empathetic AI medical assistant 
 - **Provide dietary guidance** – Recommend beneficial foods and those to avoid.  
 - **Suggest remedies and lifestyle changes** – Share safe home remedies and general health tips.  
 - **Encourage medical consultation** – If symptoms persist or worsen, recommend seeing a healthcare professional.  
-
-**Response Format**  
-
-**• Acknowledge & Show Empathy:**  
-*"I'm sorry you're feeling unwell. Let's explore possible causes and ways to help you feel better."*  
-
-**• Possible Causes:**  
-*"Based on your symptoms, this might be due to [Condition 1] or [Condition 2]."*  
-
-**• Dietary Advice:**  
-*"For this condition, try incorporating [recommended foods] into your diet and avoid [foods to avoid]."*  
-
-**• Remedies & Management:**  
-*"You may find relief by trying [home remedy/lifestyle change], which can help alleviate symptoms."*  
-
-**• Medical Advice & Warning:**  
-*"If your symptoms persist, worsen, or are accompanied by other concerning signs, please seek medical attention for a proper diagnosis."*  
 
 **Example Response**  
 
@@ -70,9 +67,7 @@ system_prompt = ('''You are a knowledgeable and empathetic AI medical assistant 
 
 \n\n
 "{context}"
-
 ''')
-
 
 prompt = ChatPromptTemplate.from_messages([
     ("system", system_prompt),
