@@ -38,7 +38,8 @@ if index_name not in pc.list_indexes().names():
         spec=ServerlessSpec(cloud="aws", region="us-west-2")
     )
 
-docsearch = PineconeVectorStore.from_existing_index(index_name=index_name, embedding=embeddings)
+# Initialize Pinecone VectorStore with text_key
+docsearch = PineconeVectorStore.from_existing_index(index_name=index_name, embedding=embeddings, text_key="text")
 retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k": 3})
 
 # Set up Google Gemini AI API key
@@ -72,7 +73,6 @@ You are a knowledgeable and empathetic AI medical assistant designed to assist u
 **• Remedies & Management:** Rest in a quiet, dark room, use a cold compress on your forehead, and practice deep breathing exercises.  
 
 **• Medical Advice:** If the headache is severe, persistent, or accompanied by nausea or vision disturbances, please consult a doctor for further evaluation.  
-
 
 "{context}"
 '''
