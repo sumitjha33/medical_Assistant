@@ -3,7 +3,7 @@ import os
 import logging
 from pinecone import Pinecone, ServerlessSpec
 from langchain.vectorstores import Pinecone as PineconeVectorStore
-from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+from langchain.embeddings import HuggingFaceBgeEmbeddings
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
@@ -14,33 +14,33 @@ logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 
-def get_embeddings():
-    """Load and return Hugging Face embeddings."""
-    return HuggingFaceBgeEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-
-embeddings = get_embeddings()
-
-# Initialize Pinecone Client
-PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
-if not PINECONE_API_KEY:
-    raise ValueError("PINECONE_API_KEY is missing in environment variables.")
-
-pc = Pinecone(api_key=PINECONE_API_KEY)
-index_name = "medical-chatbot"
-
-# Ensure index exists
-if index_name not in pc.list_indexes().names():
-    logging.info(f"Creating Pinecone index: {index_name}")
-    pc.create_index(
-        name=index_name,
-        dimension=384,  # Ensure this matches the embedding model
-        metric="cosine",
-        spec=ServerlessSpec(cloud="aws", region="us-west-2")
+try:
+    # Initialize Pinecone
+    pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
+    
+    # Get the index
+    index = pc.Index("medical-chatbot")
+    
+    # Load Hugging Face embeddings
+    embeddings = HuggingFaceBgeEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
+    
+    # Initialize vector store
+    docsearch = PineconeVectorStore(
+        index=index,
+        embedding=embeddings,
+        text_key="text"
+    )
+    
+    retriever = docsearch.as_retriever(
+        search_type='similarity',
+        search_kwargs={"k": 3}
     )
 
-# Initialize Pinecone VectorStore with text_key
-docsearch = PineconeVectorStore.from_existing_index(index_name=index_name, embedding=embeddings, text_key="text")
-retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k": 3})
+except Exception as e:
+    print(f"Error initializing Pinecone: {str(e)}")
+    raise
 
 # Set up Google Gemini AI API key
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
