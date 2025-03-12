@@ -3,3 +3,5 @@ pinecone
 langchain
 langchain-google-genai
 sentence-transformers
+langchain_community
+gunicorn
