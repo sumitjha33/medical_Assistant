@@ -1,4 +1,5 @@
 Flask
+pinecone-client
 pinecone
 langchain
 langchain-google-genai
