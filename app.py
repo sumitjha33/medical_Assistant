@@ -3,13 +3,14 @@ import os
 import logging
 import tempfile
 from pathlib import Path
-from pinecone import Pinecone, ServerlessSpec
-from langchain.vectorstores import Pinecone as PineconeVectorStore
-from langchain.embeddings import HuggingFaceBgeEmbeddings
+from pinecone import Pinecone
+from langchain_community.vectorstores import Pinecone as PineconeVectorStore
+from langchain_community.embeddings import HuggingFaceBgeEmbeddings
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
+from huggingface_hub import login
 from transformers import AutoTokenizer, AutoModel
 
 # Configure logging and environment
@@ -19,32 +20,29 @@ logger = logging.getLogger(__name__)
 # Set up model caching directory
 CACHE_DIR = os.getenv('TRANSFORMER_CACHE', os.path.join(tempfile.gettempdir(), 'huggingface'))
 os.makedirs(CACHE_DIR, exist_ok=True)
-os.environ['TRANSFORMERS_CACHE'] = CACHE_DIR
-os.environ['SENTENCE_TRANSFORMERS_HOME'] = CACHE_DIR
+
+# Set up HuggingFace token
+HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN")
+if HUGGINGFACE_TOKEN:
+    login(token=HUGGINGFACE_TOKEN)
+else:
+    logger.warning("HUGGINGFACE_TOKEN not found in environment variables")
 
 app = Flask(__name__)
 
 def initialize_embeddings():
     try:
-        # First try loading with default settings
         return HuggingFaceBgeEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs={
-                'device': 'cpu',
-                'cache_folder': CACHE_DIR
-            },
+            model_kwargs={'device': 'cpu'},
             encode_kwargs={'normalize_embeddings': True}
         )
     except Exception as e:
         logger.warning(f"First embedding attempt failed: {e}")
         try:
-            # Fallback to smaller model
             return HuggingFaceBgeEmbeddings(
                 model_name="sentence-transformers/paraphrase-MiniLM-L3-v2",
-                model_kwargs={
-                    'device': 'cpu',
-                    'cache_folder': CACHE_DIR
-                },
+                model_kwargs={'device': 'cpu'},
                 encode_kwargs={'normalize_embeddings': True}
             )
         except Exception as e:
