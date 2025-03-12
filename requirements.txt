@@ -1,0 +1,5 @@
+Flask
+pinecone-client
+langchain
+langchain-google-genai
+sentence-transformers
