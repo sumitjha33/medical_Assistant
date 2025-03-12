@@ -8,9 +8,11 @@ from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
+from transformers import AutoTokenizer, AutoModel
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
@@ -21,10 +23,16 @@ try:
     # Get the index
     index = pc.Index("medical-chatbot")
     
-    # Load Hugging Face embeddings
-    embeddings = HuggingFaceBgeEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
+    try:
+        # Load Hugging Face embeddings
+        embeddings = HuggingFaceBgeEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
+            model_kwargs={'device': 'cpu'},  # Force CPU usage
+            encode_kwargs={'normalize_embeddings': True}
+        )
+    except Exception as e:
+        logger.error(f"Error loading embeddings: {str(e)}")
+        raise
     
     # Initialize vector store
     docsearch = PineconeVectorStore(
@@ -39,7 +47,7 @@ try:
     )
 
 except Exception as e:
-    print(f"Error initializing Pinecone: {str(e)}")
+    logger.error(f"Error initializing Pinecone: {str(e)}")
     raise
 
 # Set up Google Gemini AI API key
