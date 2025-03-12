@@ -1,6 +1,8 @@
 from flask import Flask, render_template, request, jsonify
 import os
 import logging
+import tempfile
+from pathlib import Path
 from pinecone import Pinecone, ServerlessSpec
 from langchain.vectorstores import Pinecone as PineconeVectorStore
 from langchain.embeddings import HuggingFaceBgeEmbeddings
@@ -10,29 +12,52 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from transformers import AutoTokenizer, AutoModel
 
-# Configure logging
+# Configure logging and environment
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Set up model caching directory
+CACHE_DIR = os.getenv('TRANSFORMER_CACHE', os.path.join(tempfile.gettempdir(), 'huggingface'))
+os.makedirs(CACHE_DIR, exist_ok=True)
+os.environ['TRANSFORMERS_CACHE'] = CACHE_DIR
+os.environ['SENTENCE_TRANSFORMERS_HOME'] = CACHE_DIR
+
 app = Flask(__name__)
 
-try:
-    # Initialize Pinecone
-    pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
-    
-    # Get the index
-    index = pc.Index("medical-chatbot")
-    
+def initialize_embeddings():
     try:
-        # Load Hugging Face embeddings
-        embeddings = HuggingFaceBgeEmbeddings(
+        # First try loading with default settings
+        return HuggingFaceBgeEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs={'device': 'cpu'},  # Force CPU usage
+            model_kwargs={
+                'device': 'cpu',
+                'cache_folder': CACHE_DIR
+            },
             encode_kwargs={'normalize_embeddings': True}
         )
     except Exception as e:
-        logger.error(f"Error loading embeddings: {str(e)}")
-        raise
+        logger.warning(f"First embedding attempt failed: {e}")
+        try:
+            # Fallback to smaller model
+            return HuggingFaceBgeEmbeddings(
+                model_name="sentence-transformers/paraphrase-MiniLM-L3-v2",
+                model_kwargs={
+                    'device': 'cpu',
+                    'cache_folder': CACHE_DIR
+                },
+                encode_kwargs={'normalize_embeddings': True}
+            )
+        except Exception as e:
+            logger.error(f"Fallback embedding failed: {e}")
+            raise
+
+try:
+    # Initialize Pinecone with retry logic
+    pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
+    index = pc.Index("medical-chatbot")
+    
+    # Initialize embeddings
+    embeddings = initialize_embeddings()
     
     # Initialize vector store
     docsearch = PineconeVectorStore(
@@ -47,7 +72,7 @@ try:
     )
 
 except Exception as e:
-    logger.error(f"Error initializing Pinecone: {str(e)}")
+    logger.error(f"Initialization error: {str(e)}")
     raise
 
 # Set up Google Gemini AI API key
