@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, jsonify
 import os
+from sentence_transformers import SentenceTransformer
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Pinecone
 from langchain.chains import create_retrieval_chain
@@ -10,65 +11,74 @@ from pinecone import Pinecone as PineconeClient
 
 app = Flask(__name__)
 
-# Initialize services
-pc = PineconeClient(api_key=os.environ["PINECONE_API_KEY"])
-index = pc.Index("medical-chatbot")
+try:
+    # Initialize embeddings first
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    embeddings = HuggingFaceEmbeddings(
+        model_name='all-MiniLM-L6-v2',
+        cache_folder="/tmp/huggingface"
+    )
 
-embeddings = HuggingFaceEmbeddings(
-    model_name="all-MiniLM-L6-v2"
-)
+    # Initialize Pinecone
+    pc = PineconeClient(api_key=os.environ["PINECONE_API_KEY"])
+    index = pc.Index("medical-chatbot")
 
-docsearch = Pinecone(
-    index=index,
-    embedding=embeddings,
-    text_key="text"
-)
+    # Initialize vector store
+    docsearch = Pinecone(
+        index=index,
+        embedding=embeddings,
+        text_key="text"
+    )
 
-retriever = docsearch.as_retriever(search_kwargs={"k": 2})
+    retriever = docsearch.as_retriever(search_kwargs={"k": 2})
 
-# Set up Gemini
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash",
-    temperature=0.9,
-    google_api_key=os.environ["GOOGLE_API_KEY"]
-)
+    # Set up Gemini
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.0-flash",
+        temperature=0.9,
+        google_api_key=os.environ["GOOGLE_API_KEY"]
+    )
 
-system_prompt = '''
-You are a knowledgeable and empathetic AI medical assistant designed to assist users with possible causes of symptoms, dietary recommendations, and general remedies. Your goal is to provide informative and compassionate responses while ensuring users understand that you are not a substitute for professional medical advice.
+    system_prompt = '''
+    You are a knowledgeable and empathetic AI medical assistant designed to assist users with possible causes of symptoms, dietary recommendations, and general remedies. Your goal is to provide informative and compassionate responses while ensuring users understand that you are not a substitute for professional medical advice.
 
-**Guidelines for Responses**  
-- **Show empathy and reassurance** – Acknowledge the user’s concern before providing advice.  
-- **Explain possible causes** – Offer clear explanations of potential reasons for their symptoms.  
-- **Provide dietary guidance** – Recommend beneficial foods and those to avoid.  
-- **Suggest remedies and lifestyle changes** – Share safe home remedies and general health tips.  
-- **Encourage medical consultation** – If symptoms persist or worsen, recommend seeing a healthcare professional.  
+    **Guidelines for Responses**  
+    - **Show empathy and reassurance** – Acknowledge the user’s concern before providing advice.  
+    - **Explain possible causes** – Offer clear explanations of potential reasons for their symptoms.  
+    - **Provide dietary guidance** – Recommend beneficial foods and those to avoid.  
+    - **Suggest remedies and lifestyle changes** – Share safe home remedies and general health tips.  
+    - **Encourage medical consultation** – If symptoms persist or worsen, recommend seeing a healthcare professional.  
 
-**Example Response**  
+    **Example Response**  
 
-**User:** *I have a headache and feel very tired. What should I do?*  
+    **User:** *I have a headache and feel very tired. What should I do?*  
 
-**Chatbot Response:**  
-*"I'm sorry you're not feeling well. A headache accompanied by fatigue may have several possible causes."*  
+    **Chatbot Response:**  
+    *"I'm sorry you're not feeling well. A headache accompanied by fatigue may have several possible causes."*  
 
-**• Possible Causes:** This could be due to dehydration, stress, lack of sleep, or an underlying infection such as the flu.  
+    **• Possible Causes:** This could be due to dehydration, stress, lack of sleep, or an underlying infection such as the flu.  
 
-**• Dietary Advice:** Increase your water intake, consume magnesium-rich foods like bananas and nuts, and avoid caffeine and processed foods.  
+    **• Dietary Advice:** Increase your water intake, consume magnesium-rich foods like bananas and nuts, and avoid caffeine and processed foods.  
 
-**• Remedies & Management:** Rest in a quiet, dark room, use a cold compress on your forehead, and practice deep breathing exercises.  
+    **• Remedies & Management:** Rest in a quiet, dark room, use a cold compress on your forehead, and practice deep breathing exercises.  
 
-**• Medical Advice:** If the headache is severe, persistent, or accompanied by nausea or vision disturbances, please consult a doctor for further evaluation.  
+    **• Medical Advice:** If the headache is severe, persistent, or accompanied by nausea or vision disturbances, please consult a doctor for further evaluation.  
 
-"{context}"
-'''
+    "{context}"
+    '''
 
-prompt = ChatPromptTemplate.from_messages([
-    ("system", system_prompt),
-    ("human", "{input}")
-])
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("human", "{input}")
+    ])
 
-# Create AI pipeline
-question_answer_chain = create_stuff_documents_chain(llm, prompt)
-rag_chain = create_retrieval_chain(retriever, question_answer_chain)
+    # Create AI pipeline
+    question_answer_chain = create_stuff_documents_chain(llm, prompt)
+    rag_chain = create_retrieval_chain(retriever, question_answer_chain)
+
+except Exception as e:
+    print(f"Initialization error: {str(e)}")
+    raise
 
 @app.route("/")
 def index():
