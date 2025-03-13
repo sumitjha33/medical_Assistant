@@ -1,99 +1,37 @@
 from flask import Flask, render_template, request, jsonify
 import os
-import gc
-import logging
-import tempfile
-from pathlib import Path
-from pinecone import Pinecone
-from langchain_community.vectorstores import Pinecone as PineconeVectorStore
-from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Pinecone
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
-from huggingface_hub import login
-from transformers import AutoTokenizer, AutoModel
-
-# Configure logging and environment
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Set up model caching directory
-CACHE_DIR = os.getenv('TRANSFORMER_CACHE', os.path.join(tempfile.gettempdir(), 'huggingface'))
-os.makedirs(CACHE_DIR, exist_ok=True)
-
-# Set up HuggingFace token
-HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN")
-if HUGGINGFACE_TOKEN:
-    login(token=HUGGINGFACE_TOKEN)
-else:
-    logger.warning("HUGGINGFACE_TOKEN not found in environment variables")
+from pinecone import Pinecone as PineconeClient
 
 app = Flask(__name__)
 
-def initialize_embeddings():
-    try:
-        # Use a smaller, more memory-efficient model
-        return HuggingFaceBgeEmbeddings(
-            model_name="sentence-transformers/paraphrase-MiniLM-L3-v2",  # Smaller model
-            model_kwargs={
-                'device': 'cpu',
-                'torch_dtype': 'float32',  # Use float32 instead of float64
-                'max_length': 128  # Limit sequence length
-            },
-            encode_kwargs={
-                'normalize_embeddings': True,
-                'batch_size': 8  # Smaller batch size
-            }
-        )
-    except Exception as e:
-        logger.error(f"Embedding initialization failed: {e}")
-        raise
+# Initialize services
+pc = PineconeClient(api_key=os.environ["PINECONE_API_KEY"])
+index = pc.Index("medical-chatbot")
 
-def clean_memory():
-    gc.collect()
-    try:
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except ImportError:
-        pass
+embeddings = HuggingFaceEmbeddings(
+    model_name="all-MiniLM-L6-v2"
+)
 
-# Update initialization section
-try:
-    clean_memory()
-    # Initialize Pinecone
-    pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
-    index = pc.Index("medical-chatbot")
-    
-    # Initialize embeddings
-    embeddings = initialize_embeddings()
-    clean_memory()
-    
-    # Initialize vector store with smaller batch size
-    docsearch = PineconeVectorStore(
-        index=index,
-        embedding=embeddings,
-        text_key="text",
-        batch_size=8  # Smaller batch size for memory efficiency
-    )
-    
-    retriever = docsearch.as_retriever(
-        search_type='similarity',
-        search_kwargs={"k": 2}  # Reduced from 3 to 2 for memory efficiency
-    )
-    clean_memory()
+docsearch = Pinecone(
+    index=index,
+    embedding=embeddings,
+    text_key="text"
+)
 
-except Exception as e:
-    logger.error(f"Initialization error: {str(e)}")
-    raise
+retriever = docsearch.as_retriever(search_kwargs={"k": 2})
 
-# Set up Google Gemini AI API key
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-if not GOOGLE_API_KEY:
-    raise ValueError("GOOGLE_API_KEY is missing in environment variables.")
-
-llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.9)
+# Set up Gemini
+llm = ChatGoogleGenerativeAI(
+    model="gemini-2.0-flash",
+    temperature=0.9,
+    google_api_key=os.environ["GOOGLE_API_KEY"]
+)
 
 system_prompt = '''
 You are a knowledgeable and empathetic AI medical assistant designed to assist users with possible causes of symptoms, dietary recommendations, and general remedies. Your goal is to provide informative and compassionate responses while ensuring users understand that you are not a substitute for professional medical advice.
@@ -146,10 +84,8 @@ def chat():
             return jsonify({"error": "No message provided"}), 400
         
         response = rag_chain.invoke({"input": user_input})
-        clean_memory()
         return jsonify({"answer": response.get('answer', "Sorry, I couldn't process your request.")})
     except Exception as e:
-        logger.error(f"Chat error: {e}")
         return jsonify({"error": "An error occurred processing your request"}), 500
 
 if __name__ == "__main__":
