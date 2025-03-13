@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, jsonify
 import os
+import gc
 import logging
 import tempfile
 from pathlib import Path
@@ -32,42 +33,56 @@ app = Flask(__name__)
 
 def initialize_embeddings():
     try:
+        # Use a smaller, more memory-efficient model
         return HuggingFaceBgeEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs={'device': 'cpu'},
-            encode_kwargs={'normalize_embeddings': True}
+            model_name="sentence-transformers/paraphrase-MiniLM-L3-v2",  # Smaller model
+            model_kwargs={
+                'device': 'cpu',
+                'torch_dtype': 'float32',  # Use float32 instead of float64
+                'max_length': 128  # Limit sequence length
+            },
+            encode_kwargs={
+                'normalize_embeddings': True,
+                'batch_size': 8  # Smaller batch size
+            }
         )
     except Exception as e:
-        logger.warning(f"First embedding attempt failed: {e}")
-        try:
-            return HuggingFaceBgeEmbeddings(
-                model_name="sentence-transformers/paraphrase-MiniLM-L3-v2",
-                model_kwargs={'device': 'cpu'},
-                encode_kwargs={'normalize_embeddings': True}
-            )
-        except Exception as e:
-            logger.error(f"Fallback embedding failed: {e}")
-            raise
+        logger.error(f"Embedding initialization failed: {e}")
+        raise
 
+def clean_memory():
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
+
+# Update initialization section
 try:
-    # Initialize Pinecone with retry logic
+    clean_memory()
+    # Initialize Pinecone
     pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
     index = pc.Index("medical-chatbot")
     
     # Initialize embeddings
     embeddings = initialize_embeddings()
+    clean_memory()
     
-    # Initialize vector store
+    # Initialize vector store with smaller batch size
     docsearch = PineconeVectorStore(
         index=index,
         embedding=embeddings,
-        text_key="text"
+        text_key="text",
+        batch_size=8  # Smaller batch size for memory efficiency
     )
     
     retriever = docsearch.as_retriever(
         search_type='similarity',
-        search_kwargs={"k": 3}
+        search_kwargs={"k": 2}  # Reduced from 3 to 2 for memory efficiency
     )
+    clean_memory()
 
 except Exception as e:
     logger.error(f"Initialization error: {str(e)}")
@@ -123,14 +138,19 @@ def index():
 
 @app.route("/chat", methods=["POST"])
 def chat():
-    data = request.json
-    user_input = data.get("message")
-    
-    if not user_input:
-        return jsonify({"error": "No message provided"}), 400
-    
-    response = rag_chain.invoke({"input": user_input})
-    return jsonify({"answer": response.get('answer', "Sorry, I couldn't process your request.")})
+    try:
+        data = request.json
+        user_input = data.get("message")
+        
+        if not user_input:
+            return jsonify({"error": "No message provided"}), 400
+        
+        response = rag_chain.invoke({"input": user_input})
+        clean_memory()
+        return jsonify({"answer": response.get('answer', "Sorry, I couldn't process your request.")})
+    except Exception as e:
+        logger.error(f"Chat error: {e}")
+        return jsonify({"error": "An error occurred processing your request"}), 500
 
 if __name__ == "__main__":
     app.run(debug=True)
