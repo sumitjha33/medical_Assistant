@@ -12,11 +12,17 @@ from pinecone import Pinecone as PineconeClient
 app = Flask(__name__)
 
 try:
-    # Initialize embeddings first
-    model = SentenceTransformer('all-MiniLM-L6-v2')
+    # Initialize embeddings with a smaller model and specific format
+    model = SentenceTransformer(
+        'sentence-transformers/paraphrase-MiniLM-L3-v2',
+        cache_folder="/tmp/huggingface",
+        format='pt'  # Only download PyTorch format
+    )
+    
     embeddings = HuggingFaceEmbeddings(
-        model_name='all-MiniLM-L6-v2',
-        cache_folder="/tmp/huggingface"
+        model_name='sentence-transformers/paraphrase-MiniLM-L3-v2',
+        model_kwargs={'device': 'cpu'},
+        encode_kwargs={'normalize_embeddings': True}
     )
 
     # Initialize Pinecone
